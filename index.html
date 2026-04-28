@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<!--
+  Terminal-style 2048
+  Ported from light-c2048 (pages/index) — a WeChat Mini Program
+  Adapted for pure web: localStorage replaces wx.storage,
+  touch/keyboard events replace wx bindings, cloud/rank removed.
+-->
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>2048 · Terminal</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0d0d;
+    --fg: #c8c8c8;
+    --accent: #39ff14;
+    --dim: #555;
+    --border: #2a2a2a;
+    --tile-empty: #1a1a1a;
+    --font: 'Courier New', Courier, monospace;
+    --grid-gap: 6px;
+    --tile-size: min(17vw, 96px);
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 15px;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px 8px 32px;
+  }
+
+  /* ── header ── */
+  #header {
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  #title {
+    font-size: clamp(22px, 6vw, 32px);
+    font-weight: bold;
+    color: var(--accent);
+    letter-spacing: 2px;
+  }
+  #lang-btn {
+    background: none;
+    border: 1px solid var(--dim);
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 3px 8px;
+    cursor: pointer;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  #lang-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── score bar ── */
+  #score-bar {
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .score-box {
+    flex: 1;
+    background: #111;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 5px 8px;
+    text-align: center;
+    font-size: 11px;
+  }
+  .score-box .label { color: var(--dim); display: block; }
+  .score-box .value { color: var(--accent); font-size: 18px; font-weight: bold; }
+
+  /* ── mode & controls ── */
+  #controls {
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+    align-items: center;
+  }
+  .ctrl-btn {
+    background: none;
+    border: 1px solid var(--dim);
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .ctrl-btn:hover, .ctrl-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  #timer-display {
+    color: #ff9933;
+    font-size: 13px;
+    font-weight: bold;
+    margin-left: auto;
+  }
+
+  /* ── challenge setup panel ── */
+  #challenge-setup {
+    width: 100%;
+    max-width: 420px;
+    background: #111;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 12px;
+    margin-bottom: 10px;
+    display: none;
+    gap: 10px;
+    flex-direction: column;
+  }
+  #challenge-setup.visible { display: flex; }
+  #challenge-setup label { font-size: 12px; color: var(--dim); }
+  #challenge-setup .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .setup-input {
+    background: var(--tile-empty);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    font-family: var(--font);
+    font-size: 13px;
+    padding: 3px 7px;
+    width: 90px;
+    border-radius: 2px;
+    outline: none;
+  }
+  .setup-input:focus { border-color: var(--accent); }
+  #start-challenge-btn {
+    background: none;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 4px 14px;
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  #start-challenge-btn:hover { background: var(--accent); color: #000; }
+
+  /* ── grid ── */
+  #grid-wrap {
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(4, var(--tile-size));
+    grid-template-rows: repeat(4, var(--tile-size));
+    gap: var(--grid-gap);
+    background: var(--border);
+    border-radius: 4px;
+    padding: var(--grid-gap);
+    touch-action: none;
+  }
+  .tile {
+    width: var(--tile-size);
+    height: var(--tile-size);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    border-radius: 2px;
+    font-size: clamp(14px, 4vw, 24px);
+    transition: transform 0.08s ease;
+    position: relative;
+  }
+  .tile-new { animation: popIn 0.12s ease; }
+  @keyframes popIn {
+    0%   { transform: scale(0.5); opacity: 0; }
+    60%  { transform: scale(1.1); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* tile colors — terminal palette */
+  .t0    { background: var(--tile-empty); color: transparent; }
+  .t2    { background: #1c2e1c; color: #8aff6a; }
+  .t4    { background: #1e2e1a; color: #a0ff78; }
+  .t8    { background: #2a3a10; color: #c8ff50; }
+  .t16   { background: #3a3800; color: #ffd700; }
+  .t32   { background: #402800; color: #ff9933; }
+  .t64   { background: #4a1800; color: #ff6622; }
+  .t128  { background: #3c0010; color: #ff4488; font-size: clamp(12px, 3.2vw, 20px); }
+  .t256  { background: #2a0030; color: #cc44ff; font-size: clamp(12px, 3.2vw, 20px); }
+  .t512  { background: #00102a; color: #44aaff; font-size: clamp(12px, 3.2vw, 20px); }
+  .t1024 { background: #001a20; color: #00ccff; font-size: clamp(10px, 2.6vw, 16px); }
+  .t2048 { background: #001808; color: var(--accent); font-size: clamp(10px, 2.6vw, 16px); border: 1px solid var(--accent); }
+  .thigh { background: #0a0a14; color: #aaaaff; font-size: clamp(8px, 2.2vw, 13px); border: 1px dashed #444; }
+
+  /* ── overlay ── */
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.82);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    gap: 16px;
+    padding: 24px;
+  }
+  #overlay.visible { display: flex; }
+  #overlay-title {
+    font-size: clamp(24px, 7vw, 40px);
+    font-weight: bold;
+    text-align: center;
+  }
+  #overlay-msg {
+    font-size: 14px;
+    color: var(--dim);
+    text-align: center;
+    max-width: 300px;
+    line-height: 1.6;
+  }
+  .ov-btn {
+    background: none;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--font);
+    font-size: 14px;
+    padding: 8px 24px;
+    cursor: pointer;
+    border-radius: 2px;
+    min-width: 140px;
+    text-align: center;
+  }
+  .ov-btn:hover { background: var(--accent); color: #000; }
+  .ov-btn.secondary { border-color: var(--dim); color: var(--fg); margin-top: -8px; }
+  .ov-btn.secondary:hover { border-color: var(--fg); }
+
+  /* ── history panel ── */
+  #history-panel {
+    width: 100%;
+    max-width: 420px;
+    background: #111;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 12px;
+    margin-bottom: 10px;
+    display: none;
+  }
+  #history-panel.visible { display: block; }
+  #history-panel h3 {
+    font-size: 12px;
+    color: var(--dim);
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  #history-list {
+    font-size: 12px;
+    line-height: 1.8;
+    max-height: 160px;
+    overflow-y: auto;
+    color: var(--fg);
+  }
+  #history-list .no-record { color: var(--dim); }
+  #history-list .hr-row { display: flex; gap: 8px; border-bottom: 1px solid #1e1e1e; padding: 2px 0; }
+  #history-list .hr-date { color: var(--dim); min-width: 90px; }
+  #history-list .hr-score { color: var(--accent); min-width: 60px; }
+  #history-list .hr-extra { color: #888; }
+
+  /* ── help ── */
+  #help {
+    width: 100%;
+    max-width: 420px;
+    color: var(--dim);
+    font-size: 11px;
+    line-height: 1.8;
+    text-align: center;
+    margin-top: 4px;
+  }
+
+  /* ── toast ── */
+  #toast {
+    position: fixed;
+    bottom: 48px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #222;
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 7px 18px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+    z-index: 200;
+    white-space: nowrap;
+  }
+  #toast.show { opacity: 1; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- header -->
+  <div id="header">
+    <div id="title">2048</div>
+    <button id="lang-btn" onclick="toggleLang()">EN</button>
+  </div>
+
+  <!-- score bar -->
+  <div id="score-bar">
+    <div class="score-box">
+      <span class="label" id="lbl-score">SCORE</span>
+      <span class="value" id="score-val">0</span>
+    </div>
+    <div class="score-box">
+      <span class="label" id="lbl-best">BEST</span>
+      <span class="value" id="best-val">0</span>
+    </div>
+  </div>
+
+  <!-- mode buttons + timer -->
+  <div id="controls">
+    <button class="ctrl-btn active" id="btn-normal" onclick="selectMode('normal')">
+      <span id="lbl-normal">NORMAL</span>
+    </button>
+    <button class="ctrl-btn" id="btn-challenge" onclick="selectMode('challenge')">
+      <span id="lbl-challenge">CHALLENGE</span>
+    </button>
+    <button class="ctrl-btn" id="btn-restart" onclick="restart()">
+      <span id="lbl-restart">RESTART</span>
+    </button>
+    <button class="ctrl-btn" id="btn-history" onclick="toggleHistory()">
+      <span id="lbl-history">HISTORY</span>
+    </button>
+    <span id="timer-display"></span>
+  </div>
+
+  <!-- challenge setup -->
+  <div id="challenge-setup">
+    <div class="row">
+      <label id="lbl-target">TARGET</label>
+      <input class="setup-input" id="inp-target" type="number" value="2048" min="64" step="64">
+    </div>
+    <div class="row">
+      <label id="lbl-time">TIME (sec)</label>
+      <input class="setup-input" id="inp-time" type="number" value="180" min="10" step="10">
+    </div>
+    <div class="row">
+      <button id="start-challenge-btn" onclick="startChallenge()">
+        <span id="lbl-start">START</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- game grid -->
+  <div id="grid-wrap">
+    <div id="grid"></div>
+  </div>
+
+  <!-- history panel -->
+  <div id="history-panel">
+    <h3 id="lbl-history-title">HISTORY</h3>
+    <div id="history-list"></div>
+  </div>
+
+  <!-- help text -->
+  <div id="help">
+    <span id="help-text"></span>
+  </div>
+</div>
+
+<!-- overlay (win / game over) -->
+<div id="overlay">
+  <div id="overlay-title"></div>
+  <div id="overlay-msg"></div>
+  <button class="ov-btn" id="ov-restart" onclick="restart()"></button>
+  <button class="ov-btn secondary" id="ov-continue" onclick="hideOverlay()"></button>
+</div>
+
+<!-- toast -->
+<div id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────────
+//  i18n strings
+// ─────────────────────────────────────────────
+const I18N = {
+  zh: {
+    score: '分数', best: '最高', normal: '普通', challenge: '挑战',
+    restart: '重开', history: '历史', target: '目标分', time: '时限(秒)',
+    start: '开始挑战', historyTitle: '历史记录', noRecord: '暂无记录',
+    win: '🎉 你赢了！', winMsg: '达成 {n}！继续合并可获更高分。',
+    over: '💀 游戏结束', overMsg: '已无可操作，最终得分 {n}。',
+    challengeWin: '✅ 挑战成功', challengeWinMsg: '在时限内达到 {n} 分！',
+    challengeFail: '⏰ 时间到', challengeFailMsg: '未能在时限内达到 {n} 分，最终 {s} 分。',
+    btnRestart: '再来一局', btnContinue: '继续',
+    help: '方向键移动 · 手机滑动屏幕',
+    langSwitch: 'EN',
+    date: '日期', scoreCol: '分数', extra: '备注',
+    normalBest: '普通最高', challengeRecord: '挑战记录',
+    success: '成功', fail: '失败',
+    timeFmt: '{m}:{s}',
+    timeLeft: '剩余 {t}',
+  },
+  en: {
+    score: 'SCORE', best: 'BEST', normal: 'NORMAL', challenge: 'CHALLENGE',
+    restart: 'RESTART', history: 'HISTORY', target: 'TARGET', time: 'TIME (sec)',
+    start: 'START', historyTitle: 'HISTORY', noRecord: 'No records yet',
+    win: '🎉 You Win!', winMsg: 'Reached {n}! Keep merging for higher score.',
+    over: '💀 Game Over', overMsg: 'No moves left. Final score: {n}.',
+    challengeWin: '✅ Challenge Clear', challengeWinMsg: 'Reached {n} pts within the time limit!',
+    challengeFail: '⏰ Time\'s Up', challengeFailMsg: 'Failed to reach {n}. Final score: {s}.',
+    btnRestart: 'New Game', btnContinue: 'Continue',
+    help: 'Arrow keys to move · Swipe on mobile',
+    langSwitch: '中',
+    date: 'Date', scoreCol: 'Score', extra: 'Note',
+    normalBest: 'Normal Best', challengeRecord: 'Challenge Records',
+    success: 'WIN', fail: 'FAIL',
+    timeFmt: '{m}:{s}',
+    timeLeft: '{t} left',
+  }
+};
+
+// ─────────────────────────────────────────────
+//  State
+// ─────────────────────────────────────────────
+let lang = 'zh';
+let mode = 'normal'; // 'normal' | 'challenge'
+let board = [];      // 16-element flat array
+let score = 0;
+let bestNormal = 0;
+let gameOver = false;
+let won = false;
+let winAcked = false; // user chose to continue after win
+
+// Challenge state
+let challengeActive = false;
+let challengeTarget = 2048;
+let challengeTime = 180;
+let challengeElapsed = 0;
+let challengeTimer = null;
+let challengeResult = null; // 'win' | 'fail' | null
+
+// Touch
+let touchStartX = 0, touchStartY = 0;
+
+// Constants
+const TILE_2_PROBABILITY  = 0.9;
+const MAX_HISTORY_RECORDS = 50;
+const MIN_SWIPE_DISTANCE  = 20;
+
+// ─────────────────────────────────────────────
+//  localStorage keys
+// ─────────────────────────────────────────────
+const LS_BEST = 'g2048_best_normal';
+const LS_HISTORY = 'g2048_challenge_history';
+const LS_LANG = 'g2048_lang';
+
+// ─────────────────────────────────────────────
+//  Init
+// ─────────────────────────────────────────────
+function init() {
+  lang = localStorage.getItem(LS_LANG) || (navigator.language.startsWith('zh') ? 'zh' : 'en');
+  bestNormal = parseInt(localStorage.getItem(LS_BEST) || '0', 10);
+  buildGrid();
+  applyLang();
+  newGame();
+}
+
+// ─────────────────────────────────────────────
+//  Language
+// ─────────────────────────────────────────────
+function t(key, vars) {
+  let s = (I18N[lang] || I18N.zh)[key] || key;
+  if (vars) Object.keys(vars).forEach(k => { s = s.replace('{' + k + '}', vars[k]); });
+  return s;
+}
+
+function toggleLang() {
+  lang = lang === 'zh' ? 'en' : 'zh';
+  localStorage.setItem(LS_LANG, lang);
+  applyLang();
+  if (document.getElementById('history-panel').classList.contains('visible')) renderHistory();
+}
+
+function applyLang() {
+  const ids = [
+    ['lbl-score', 'score'], ['lbl-best', 'best'], ['lbl-normal', 'normal'],
+    ['lbl-challenge', 'challenge'], ['lbl-restart', 'restart'],
+    ['lbl-history', 'history'], ['lbl-target', 'target'],
+    ['lbl-time', 'time'], ['lbl-start', 'start'],
+    ['lbl-history-title', 'historyTitle'], ['help-text', 'help'],
+  ];
+  ids.forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = t(key);
+  });
+  document.getElementById('lang-btn').textContent = t('langSwitch');
+  document.documentElement.lang = lang;
+}
+
+// ─────────────────────────────────────────────
+//  Mode selection
+// ─────────────────────────────────────────────
+function selectMode(m) {
+  mode = m;
+  document.getElementById('btn-normal').classList.toggle('active', m === 'normal');
+  document.getElementById('btn-challenge').classList.toggle('active', m === 'challenge');
+  document.getElementById('challenge-setup').classList.toggle('visible', m === 'challenge' && !challengeActive);
+  if (m === 'normal') {
+    stopChallengeTimer();
+    challengeActive = false;
+    challengeResult = null;
+    updateTimer();
+    newGame();
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Game core
+// ─────────────────────────────────────────────
+function newGame() {
+  board = Array(16).fill(0);
+  score = 0;
+  gameOver = false;
+  won = false;
+  winAcked = false;
+  hideOverlay();
+  addTile();
+  addTile();
+  renderBoard();
+  updateScore();
+}
+
+function restart() {
+  if (challengeActive) {
+    stopChallengeTimer();
+    challengeActive = false;
+    challengeResult = null;
+    document.getElementById('challenge-setup').classList.toggle('visible', mode === 'challenge');
+  }
+  hideOverlay();
+  newGame();
+}
+
+function addTile() {
+  const empty = board.reduce((acc, v, i) => { if (v === 0) acc.push(i); return acc; }, []);
+  if (empty.length === 0) return;
+  const idx = empty[Math.floor(Math.random() * empty.length)];
+  board[idx] = Math.random() < TILE_2_PROBABILITY ? 2 : 4;
+  return idx;
+}
+
+// ── Slide one row/column left (returns {row, moved, mergeScore})
+function slideLeft(row) {
+  let arr = row.filter(x => x !== 0);
+  let merged = 0;
+  for (let i = 0; i < arr.length - 1; i++) {
+    if (arr[i] === arr[i + 1]) {
+      arr[i] *= 2;
+      merged += arr[i];
+      arr.splice(i + 1, 1);
+    }
+  }
+  while (arr.length < 4) arr.push(0);
+  const moved = arr.some((v, i) => v !== row[i]);
+  return { row: arr, merged, moved };
+}
+
+function getRow(r) { return board.slice(r * 4, r * 4 + 4); }
+function setRow(r, arr) { arr.forEach((v, c) => { board[r * 4 + c] = v; }); }
+function getCol(c) { return [0,1,2,3].map(r => board[r * 4 + c]); }
+function setCol(c, arr) { arr.forEach((v, r) => { board[r * 4 + c] = v; }); }
+
+function move(dir) {
+  if (gameOver) return false;
+  if (challengeActive && challengeResult) return false;
+  let totalMerge = 0;
+  let anyMoved = false;
+  let newTileIdx = -1;
+
+  if (dir === 'left') {
+    for (let r = 0; r < 4; r++) {
+      const { row, merged, moved } = slideLeft(getRow(r));
+      setRow(r, row); totalMerge += merged; if (moved) anyMoved = true;
+    }
+  } else if (dir === 'right') {
+    for (let r = 0; r < 4; r++) {
+      const { row, merged, moved } = slideLeft(getRow(r).reverse());
+      setRow(r, row.reverse()); totalMerge += merged; if (moved) anyMoved = true;
+    }
+  } else if (dir === 'up') {
+    for (let c = 0; c < 4; c++) {
+      const { row, merged, moved } = slideLeft(getCol(c));
+      setCol(c, row); totalMerge += merged; if (moved) anyMoved = true;
+    }
+  } else if (dir === 'down') {
+    for (let c = 0; c < 4; c++) {
+      const { row, merged, moved } = slideLeft(getCol(c).reverse());
+      setCol(c, row.reverse()); totalMerge += merged; if (moved) anyMoved = true;
+    }
+  }
+
+  if (!anyMoved) return false;
+
+  score += totalMerge;
+  newTileIdx = addTile();
+  renderBoard(newTileIdx);
+  updateScore();
+  checkGameState();
+  return true;
+}
+
+function checkGameState() {
+  const maxTile = Math.max(...board);
+
+  // challenge win
+  if (challengeActive && !challengeResult && score >= challengeTarget) {
+    challengeResult = 'win';
+    stopChallengeTimer();
+    saveChallenge('win');
+    showOverlay(t('challengeWin'), t('challengeWinMsg', { n: challengeTarget }), true);
+    return;
+  }
+
+  // normal win (2048 first time)
+  if (!winAcked && !won && maxTile >= 2048 && mode === 'normal') {
+    won = true;
+    showOverlay(t('win'), t('winMsg', { n: maxTile }), true);
+    return;
+  }
+
+  // game over
+  if (!canMove()) {
+    gameOver = true;
+    if (challengeActive && !challengeResult) {
+      challengeResult = 'fail';
+      stopChallengeTimer();
+      saveChallenge('fail');
+      showOverlay(t('challengeFail'), t('challengeFailMsg', { n: challengeTarget, s: score }), false);
+    } else {
+      showOverlay(t('over'), t('overMsg', { n: score }), false);
+    }
+  }
+}
+
+function canMove() {
+  if (board.includes(0)) return true;
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) {
+      const v = board[r * 4 + c];
+      if (c < 3 && v === board[r * 4 + c + 1]) return true;
+      if (r < 3 && v === board[(r + 1) * 4 + c]) return true;
+    }
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────
+//  Challenge mode
+// ─────────────────────────────────────────────
+function startChallenge() {
+  challengeTarget = Math.max(64, parseInt(document.getElementById('inp-target').value, 10) || 2048);
+  challengeTime   = Math.max(10, parseInt(document.getElementById('inp-time').value, 10)   || 180);
+  challengeElapsed = 0;
+  challengeResult  = null;
+  challengeActive  = true;
+  document.getElementById('challenge-setup').classList.remove('visible');
+  newGame();
+  startChallengeTimer();
+}
+
+function startChallengeTimer() {
+  stopChallengeTimer();
+  challengeTimer = setInterval(() => {
+    challengeElapsed++;
+    updateTimer();
+    if (challengeElapsed >= challengeTime && !challengeResult) {
+      challengeResult = 'fail';
+      stopChallengeTimer();
+      gameOver = true;
+      saveChallenge('fail');
+      showOverlay(t('challengeFail'), t('challengeFailMsg', { n: challengeTarget, s: score }), false);
+    }
+  }, 1000);
+}
+
+function stopChallengeTimer() {
+  if (challengeTimer) { clearInterval(challengeTimer); challengeTimer = null; }
+  updateTimer();
+}
+
+function updateTimer() {
+  const el = document.getElementById('timer-display');
+  if (!challengeActive || (!challengeTimer && challengeResult === null)) {
+    el.textContent = '';
+    return;
+  }
+  if (challengeActive) {
+    const remaining = Math.max(0, challengeTime - challengeElapsed);
+    const m = String(Math.floor(remaining / 60)).padStart(2, '0');
+    const s = String(remaining % 60).padStart(2, '0');
+    el.textContent = t('timeLeft', { t: `${m}:${s}` });
+    el.style.color = remaining <= 30 ? '#ff3333' : '#ff9933';
+  } else {
+    el.textContent = '';
+  }
+}
+
+// ─────────────────────────────────────────────
+//  History / localStorage
+// ─────────────────────────────────────────────
+function saveBest() {
+  if (mode === 'normal' && score > bestNormal) {
+    bestNormal = score;
+    localStorage.setItem(LS_BEST, bestNormal);
+  }
+}
+
+function saveChallenge(result) {
+  const history = JSON.parse(localStorage.getItem(LS_HISTORY) || '[]');
+  history.unshift({
+    date: new Date().toLocaleDateString(),
+    target: challengeTarget,
+    time: challengeTime,
+    score,
+    elapsed: challengeElapsed,
+    result,
+  });
+  if (history.length > MAX_HISTORY_RECORDS) history.length = MAX_HISTORY_RECORDS;
+  localStorage.setItem(LS_HISTORY, JSON.stringify(history));
+}
+
+function toggleHistory() {
+  const panel = document.getElementById('history-panel');
+  const visible = panel.classList.toggle('visible');
+  if (visible) renderHistory();
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  if (mode === 'normal') {
+    list.innerHTML = `<div class="hr-row"><span class="hr-date">${t('normalBest')}</span><span class="hr-score">${bestNormal}</span></div>`;
+    return;
+  }
+  const history = JSON.parse(localStorage.getItem(LS_HISTORY) || '[]');
+  if (history.length === 0) {
+    list.innerHTML = `<div class="no-record">${t('noRecord')}</div>`;
+    return;
+  }
+  list.innerHTML = history.map(h => {
+    const res = h.result === 'win' ? `<span style="color:var(--accent)">${t('success')}</span>` : `<span style="color:#ff3333">${t('fail')}</span>`;
+    const elapsed = `${Math.floor(h.elapsed/60)}:${String(h.elapsed%60).padStart(2,'0')}`;
+    return `<div class="hr-row">
+      <span class="hr-date">${h.date}</span>
+      <span class="hr-score">${h.score}</span>
+      <span class="hr-extra">${t('target')} ${h.target} | ${elapsed} | ${res}</span>
+    </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────
+//  Render
+// ─────────────────────────────────────────────
+function buildGrid() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 16; i++) {
+    const div = document.createElement('div');
+    div.className = 'tile t0';
+    div.id = 'tile-' + i;
+    grid.appendChild(div);
+  }
+}
+
+function tileClass(v) {
+  if (v === 0) return 't0';
+  if (v <= 2048) return 't' + v;
+  return 'thigh';
+}
+
+function renderBoard(newIdx) {
+  for (let i = 0; i < 16; i++) {
+    const el = document.getElementById('tile-' + i);
+    const v = board[i];
+    el.className = 'tile ' + tileClass(v) + (i === newIdx ? ' tile-new' : '');
+    el.textContent = v === 0 ? '' : v;
+  }
+}
+
+function updateScore() {
+  document.getElementById('score-val').textContent = score;
+  saveBest();
+  document.getElementById('best-val').textContent = mode === 'normal' ? bestNormal : score;
+}
+
+// ─────────────────────────────────────────────
+//  Overlay
+// ─────────────────────────────────────────────
+function showOverlay(title, msg, canContinue) {
+  document.getElementById('overlay-title').textContent = title;
+  document.getElementById('overlay-msg').textContent = msg;
+  document.getElementById('ov-restart').textContent = t('btnRestart');
+  const contBtn = document.getElementById('ov-continue');
+  if (canContinue) {
+    contBtn.style.display = '';
+    contBtn.textContent = t('btnContinue');
+  } else {
+    contBtn.style.display = 'none';
+  }
+  document.getElementById('overlay').classList.add('visible');
+}
+
+function hideOverlay() {
+  document.getElementById('overlay').classList.remove('visible');
+  if (won && !winAcked) winAcked = true;
+}
+
+// ─────────────────────────────────────────────
+//  Toast
+// ─────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg, duration) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), duration || 1800);
+}
+
+// ─────────────────────────────────────────────
+//  Input: Keyboard
+// ─────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+                a: 'left', d: 'right', w: 'up', s: 'down',
+                A: 'left', D: 'right', W: 'up', S: 'down' };
+  if (map[e.key]) {
+    e.preventDefault();
+    move(map[e.key]);
+  }
+});
+
+// ─────────────────────────────────────────────
+//  Input: Touch / Swipe
+// ─────────────────────────────────────────────
+const grid = document.getElementById('grid');
+grid.addEventListener('touchstart', e => {
+  touchStartX = e.touches[0].clientX;
+  touchStartY = e.touches[0].clientY;
+}, { passive: true });
+
+grid.addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  const absDx = Math.abs(dx), absDy = Math.abs(dy);
+  if (Math.max(absDx, absDy) < MIN_SWIPE_DISTANCE) return;
+  if (absDx > absDy) move(dx > 0 ? 'right' : 'left');
+  else               move(dy > 0 ? 'down'  : 'up');
+}, { passive: true });
+
+// ─────────────────────────────────────────────
+//  Bootstrap
+// ─────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
